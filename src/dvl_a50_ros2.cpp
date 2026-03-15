@@ -217,7 +217,8 @@ public:
             {
                 RCLCPP_ERROR(get_logger(), "%s failed: %s", trigger.c_str(), res["error_message"].dump().c_str());
             }
-
+            
+            pending_srv_mtx.lock();
             // Check if we have a pending service call for this command and release it
             auto pending_it = pending_service_calls.find(trigger);
             if (pending_it != pending_service_calls.end())
@@ -225,6 +226,7 @@ public:
                 pending_it->second.set_value(res);
                 pending_service_calls.erase(pending_it);
             }
+            pending_srv_mtx.unlock();
         }
         else if(res.contains("altitude"))
         {
@@ -331,7 +333,9 @@ public:
     {
         std::promise<DvlA50::Message> promise;
         std::future<DvlA50::Message> future = promise.get_future();
+        pending_srv_mtx.lock();
         pending_service_calls.insert(std::make_pair(command, std::move(promise)));
+        pending_srv_mtx.unlock();
         dvl.send_command(command);
 
         DvlA50::Message json_data = future.get();
@@ -355,7 +359,9 @@ public:
     {
         std::promise<DvlA50::Message> promise;
         std::future<DvlA50::Message> future = promise.get_future();
+        pending_srv_mtx.lock();
         pending_service_calls.insert(std::make_pair("set_config", std::move(promise)));
+        pending_srv_mtx.unlock();
         dvl.set(param, value);
 
         DvlA50::Message json_data = future.get();
@@ -376,6 +382,8 @@ private:
 
     // Promises of unfulfilled service calls; assumes that no service is called twice in parallel
     std::map<std::string, std::promise<DvlA50::Message>> pending_service_calls;
+    // Mutex to protect pending_service_calls map, which is accessed from both the timer callback and service callbacks. 
+    std::mutex pending_srv_mtx;
     
     rclcpp::TimerBase::SharedPtr timer;
     rclcpp_lifecycle::LifecyclePublisher<marine_acoustic_msgs::msg::Dvl>::SharedPtr velocity_pub;
@@ -392,6 +400,7 @@ private:
     // timer callback groups to ensure publish and service handling is done on separate threads
     rclcpp::CallbackGroup::SharedPtr timer_callback_group_;
     rclcpp::CallbackGroup::SharedPtr service_callback_group_;
+
 };
 
 
