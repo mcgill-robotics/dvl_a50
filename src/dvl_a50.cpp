@@ -185,7 +185,7 @@ void DvlA50::send_command(std::string cmd)
 {
     std::cout << "send command '" << cmd << "'" << std::endl;
 
-    json json_data = {"command", cmd};
+    json json_data = {{"command", cmd}};
     send(json_data);
 }
 
