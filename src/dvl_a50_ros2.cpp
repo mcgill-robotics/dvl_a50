@@ -338,7 +338,7 @@ public:
         res->success = json_data["success"];
         if (res->success)
         {
-            res->message = json_data["result"];
+            res->message = json_data["error_message"];
         }
         else
         {
