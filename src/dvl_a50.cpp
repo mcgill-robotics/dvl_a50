@@ -75,7 +75,7 @@ void DvlA50::disconnect()
 
 void DvlA50::send(const Message& msg)
 {
-    std::string str = msg.dump();
+    std::string str = msg.dump() + '\n';
     char* c = &*str.begin();
     std::lock_guard<std::mutex> lock(mtx);
     tcp_socket->Send(c);
