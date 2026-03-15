@@ -26,6 +26,7 @@ using namespace dvl_a50;
 class DvlA50Node : public rclcpp_lifecycle::LifecycleNode
 {
 public:
+    constexpr const static char* PROTOCOL_FORMAT = "json_v3.1";
     DvlA50Node(std::string name)
     : rclcpp_lifecycle::LifecycleNode(name)
     {
@@ -202,7 +203,11 @@ public:
     void publish()
     {
         DvlA50::Message res = dvl.receive();
-
+        std::string format = res["format"];
+        if (format != PROTOCOL_FORMAT)
+        {
+            RCLCPP_WARN_THROTTLE(get_logger(), *this, 1.0, "This driver expect Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible", PROTOCOL_FORMAT, format.c_str());
+        }
         if (res.contains("response_to"))
         {
             // Command response
