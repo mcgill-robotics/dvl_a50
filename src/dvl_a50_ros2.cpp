@@ -29,6 +29,9 @@ public:
     DvlA50Node(std::string name)
     : rclcpp_lifecycle::LifecycleNode(name)
     {
+        // Create callback groups
+        timer_callback_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        service_callback_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
         this->declare_parameter<std::string>("ip_address", "192.168.194.95");
         this->declare_parameter<std::string>("frame", "dvl_a50_link");
         this->declare_parameter<double>("rate", 30.0);
@@ -119,33 +122,40 @@ public:
         // Services
         enable_srv = this->create_service<std_srvs::srv::Trigger>(
             "enable", 
-            bind(&DvlA50Node::srv_send_param<bool>, this, "acoustic_enabled", true, std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_param<bool>, this, "acoustic_enabled", true, std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         disable_srv = this->create_service<std_srvs::srv::Trigger>(
             "disable", 
-            bind(&DvlA50Node::srv_send_param<bool>, this, "acoustic_enabled", false, std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_param<bool>, this, "acoustic_enabled", false, std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         get_config_srv = this->create_service<std_srvs::srv::Trigger>(
             "get_config", 
-            bind(&DvlA50Node::srv_send_command, this, "get_config", std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_command, this, "get_config", std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         calibrate_gyro_srv = this->create_service<std_srvs::srv::Trigger>(
             "calibrate_gyro", 
-            bind(&DvlA50Node::srv_send_command, this, "calibrate_gyro", std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_command, this, "calibrate_gyro", std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         reset_dead_reckoning_srv = this->create_service<std_srvs::srv::Trigger>(
             "reset_dead_reckoning", 
-            bind(&DvlA50Node::srv_send_command, this, "reset_dead_reckoning", std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_command, this, "reset_dead_reckoning", std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         trigger_ping_srv = this->create_service<std_srvs::srv::Trigger>(
             "trigger_ping", 
-            bind(&DvlA50Node::srv_send_command, this, "trigger_ping", std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_command, this, "trigger_ping", std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         // Start reading data
         RCLCPP_INFO(get_logger(), "Starting to receive reports at <= %f Hz", rate);
         timer = this->create_wall_timer(
-            std::chrono::duration<double>(1. / rate), 
-            std::bind(&DvlA50Node::publish, this)
+            std::chrono::duration<double>(1. / rate),
+            std::bind(&DvlA50Node::publish, this),
+            timer_callback_group_
         );
 
         return CallbackReturn::SUCCESS;
@@ -309,7 +319,7 @@ public:
         }
         else
         {
-            RCLCPP_WARN(get_logger(), "Received unexpected DVL response: %s", res.dump().c_str());
+            RCLCPP_WARN_STREAM(get_logger(), "Received unexpected DVL response: " << std::setw(4) << res.dump().c_str());
         }
     }
 
@@ -378,6 +388,10 @@ private:
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr calibrate_gyro_srv;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_dead_reckoning_srv;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr trigger_ping_srv;
+
+    // timer callback groups to ensure publish and service handling is done on separate threads
+    rclcpp::CallbackGroup::SharedPtr timer_callback_group_;
+    rclcpp::CallbackGroup::SharedPtr service_callback_group_;
 };
 
 
@@ -389,7 +403,7 @@ int main(int argc, char * argv[])
     setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 
     rclcpp::init(argc, argv);
-    rclcpp::executors::SingleThreadedExecutor exe;
+    rclcpp::executors::MultiThreadedExecutor exe;
     std::shared_ptr<DvlA50Node> node = std::make_shared<DvlA50Node>("dvl_a50");
     exe.add_node(node->get_node_base_interface());
     exe.spin();
