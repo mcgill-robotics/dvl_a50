@@ -217,7 +217,14 @@ public:
             // Always print the result
             if (res["success"])
             {
-                RCLCPP_INFO(get_logger(), "%s success: %s", trigger.c_str(), res["result"].dump().c_str());
+                // most results are null except for get_config, so only print if it's not null to avoid spamming the console with confusing null logs
+                if (!res["result"].is_null())
+                {
+                    RCLCPP_INFO(get_logger(), "%s success: %s", trigger.c_str(), res["result"].dump().c_str());
+                }
+                else {
+                    RCLCPP_INFO(get_logger(), "%s success", trigger.c_str());
+                }
             }
             else
             {
@@ -236,6 +243,21 @@ public:
         }
         else if(type == "velocity")
         {
+            if (!res["velocity_valid"])
+            {
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1.0, "Received velocity report with invalid velocity data");
+            }
+            int dvl_status = res["status"];
+            if (dvl_status > 0)
+            {
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1.0, "Received velocity report with error status " << dvl_status);
+                if (dvl_status == 1)
+                {
+                    RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 0.5, "DVL may be overheating");
+                }
+
+            }
+
             // Velocity report
             velocity_report.header.stamp = rclcpp::Time(uint64_t(res["time_of_validity"]) * 1000);
 
@@ -302,6 +324,11 @@ public:
         }
         else if (type == "position_local")
         {
+            int dvl_status = res["status"];
+            if (dvl_status > 0)
+            {
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1.0, "Received dead reckoning report report with error status " << dvl_status);
+            }
             // Dead reckoning report
             dead_reckoning_report.header.stamp = rclcpp::Time(static_cast<uint64_t>(double(res["ts"])) * 1e9);
 
