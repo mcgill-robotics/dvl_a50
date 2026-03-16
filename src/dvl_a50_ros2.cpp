@@ -208,7 +208,8 @@ public:
         {
             RCLCPP_WARN_THROTTLE(get_logger(), *this, 1.0, "This driver expect Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible", PROTOCOL_FORMAT, format.c_str());
         }
-        if (res.contains("response_to"))
+        std::string type = res["type"];
+        if (type == "response")
         {
             // Command response
             std::string trigger = res["response_to"];
@@ -233,7 +234,7 @@ public:
             }
             pending_srv_mtx.unlock();
         }
-        else if(res.contains("altitude"))
+        else if(type == "velocity")
         {
             // Velocity report
             velocity_report.header.stamp = rclcpp::Time(uint64_t(res["time_of_validity"]) * 1000);
@@ -299,7 +300,7 @@ public:
             
             odometry_pub->publish(odometry);
         }
-        else if (res.contains("pitch"))
+        else if (type == "position_local")
         {
             // Dead reckoning report
             dead_reckoning_report.header.stamp = rclcpp::Time(static_cast<uint64_t>(double(res["ts"])) * 1e9);
