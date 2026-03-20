@@ -110,7 +110,12 @@ DvlA50::Message DvlA50::receive()
     }
     catch(std::exception& e)
     {
-        return {"error", std::string(e.what())};
+        return 
+        {
+            {"type", "error"},
+            {"error_message", std::string(e.what())},
+            {"raw_message", str}
+        };
     }
 }
 

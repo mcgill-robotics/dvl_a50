@@ -203,13 +203,22 @@ public:
     void publish()
     {
         DvlA50::Message res = dvl.receive();
+        if (!res.contains("format") || !res.contains("type"))
+        {
+            RCLCPP_ERROR_STREAM_THROTTLE(get_logger(), *this, 200, "Received JSON packet without format or type fields: " << std::setw(4) << res.dump());
+            return;
+        }
         std::string format = res["format"];
         if (format != PROTOCOL_FORMAT)
         {
-            RCLCPP_WARN_THROTTLE(get_logger(), *this, 1.0, "This driver expect Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible", PROTOCOL_FORMAT, format.c_str());
+            RCLCPP_WARN_THROTTLE(get_logger(), *this, 1000, "This driver expect Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible", PROTOCOL_FORMAT, format.c_str());
         }
         std::string type = res["type"];
-        if (type == "response")
+        if (type == "error")
+        {
+            RCLCPP_ERROR(get_logger(), "Failed to parse JSON with error: \n%s \nraw: \n%s", res["error_message"].dump().c_str(), res["raw_message"].dump().c_str());
+        }
+        else if (type == "response")
         {
             // Command response
             std::string trigger = res["response_to"];
@@ -245,15 +254,15 @@ public:
         {
             if (!res["velocity_valid"])
             {
-                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1.0, "Received velocity report with invalid velocity data");
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with invalid velocity data");
             }
             int dvl_status = res["status"];
             if (dvl_status > 0)
             {
-                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1.0, "Received velocity report with error status " << dvl_status);
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with error status " << dvl_status);
                 if (dvl_status == 1)
                 {
-                    RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 0.5, "DVL may be overheating");
+                    RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 500, "DVL may be overheating");
                 }
 
             }
@@ -327,7 +336,7 @@ public:
             int dvl_status = res["status"];
             if (dvl_status > 0)
             {
-                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1.0, "Received dead reckoning report report with error status " << dvl_status);
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received dead reckoning report report with error status " << dvl_status);
             }
             // Dead reckoning report
             dead_reckoning_report.header.stamp = rclcpp::Time(static_cast<uint64_t>(double(res["ts"])) * 1e9);
