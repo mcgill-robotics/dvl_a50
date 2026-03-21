@@ -205,7 +205,8 @@ public:
         DvlA50::Message res = dvl.receive();
         if (!res.contains("format") || !res.contains("type"))
         {
-            RCLCPP_ERROR_STREAM_THROTTLE(get_logger(), *this, 200, "Received JSON packet without format or type fields: " << std::setw(4) << res.dump());
+            RCLCPP_ERROR_STREAM_THROTTLE(get_logger(), *this, 200, "Received JSON packet without format or type fields: " 
+                << std::setw(4) << res.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
             return;
         }
         std::string format = res["format"];
@@ -216,7 +217,9 @@ public:
         std::string type = res["type"];
         if (type == "error")
         {
-            RCLCPP_ERROR(get_logger(), "Failed to parse JSON with error: \n%s \nraw: \n%s", res["error_message"].dump().c_str(), res["raw_message"].dump().c_str());
+            RCLCPP_ERROR(get_logger(), "Failed to parse JSON with error: \n%s \nraw: \n%s", 
+                res["error_message"].get<std::string>().c_str(), 
+                res["raw_message"].get<std::string>().c_str());
         }
         else if (type == "response")
         {
@@ -229,7 +232,7 @@ public:
                 // most results are null except for get_config, so only print if it's not null to avoid spamming the console with confusing null logs
                 if (!res["result"].is_null())
                 {
-                    RCLCPP_INFO(get_logger(), "%s success: %s", trigger.c_str(), res["result"].dump().c_str());
+                    RCLCPP_INFO(get_logger(), "%s success: %s", trigger.c_str(), res["result"].dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
                 }
                 else {
                     RCLCPP_INFO(get_logger(), "%s success", trigger.c_str());
@@ -237,7 +240,7 @@ public:
             }
             else
             {
-                RCLCPP_ERROR(get_logger(), "%s failed: %s", trigger.c_str(), res["error_message"].dump().c_str());
+                RCLCPP_ERROR(get_logger(), "%s failed: %s", trigger.c_str(), res["error_message"].dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
             }
             
             pending_srv_mtx.lock();
@@ -363,7 +366,8 @@ public:
         }
         else
         {
-            RCLCPP_WARN_STREAM(get_logger(), "Received unexpected DVL response: " << std::setw(4) << res.dump().c_str());
+            RCLCPP_WARN_STREAM(get_logger(), "Received unexpected DVL response: " 
+                << std::setw(4) << res.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
         }
     }
 
