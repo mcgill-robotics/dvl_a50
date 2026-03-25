@@ -75,7 +75,7 @@ void DvlA50::disconnect()
 
 void DvlA50::send(const Message& msg)
 {
-    std::string str = msg.dump();
+    std::string str = msg.dump() + '\n';
     char* c = &*str.begin();
     std::lock_guard<std::mutex> lock(mtx);
     tcp_socket->Send(c);
@@ -86,23 +86,30 @@ DvlA50::Message DvlA50::receive()
     // Single threaded access only
     std::lock_guard<std::mutex> lock(mtx);
 
-    char *tempBuffer = new char[1];
+    char tempBuffer[1] = {'\0'};
     std::string str; 
     
     if(fault != 0)
     {
-        return {"fault", std::to_string(fault)};
+        return {{"type", "error"}, {"error_message", std::to_string(fault)}};
     }
     
     while(tempBuffer[0] != '\n')
     {
-        if(tcp_socket->Receive(tempBuffer) != 0)
+        int bytes_read = tcp_socket->Receive(tempBuffer);
+        
+        if (bytes_read > 0)
         {
-            str = str + tempBuffer[0];
+            str += tempBuffer[0];
         }
+        else if (bytes_read == 0)
+        {
+            // Connection closed by peer
+            break; 
+        }
+        // If bytes_read < 0, it's a timeout/error. Continue the 
+        // loop to wait for the next byte without appending garbage.
     }
-
-    delete tempBuffer;
 
     try
     {
@@ -110,7 +117,12 @@ DvlA50::Message DvlA50::receive()
     }
     catch(std::exception& e)
     {
-        return {"error", std::string(e.what())};
+        return 
+        {
+            {"type", "error"},
+            {"error_message", std::string(e.what())},
+            {"raw_message", str}
+        };
     }
 }
 
@@ -185,7 +197,7 @@ void DvlA50::send_command(std::string cmd)
 {
     std::cout << "send command '" << cmd << "'" << std::endl;
 
-    json json_data = {"command", cmd};
+    json json_data = {{"command", cmd}};
     send(json_data);
 }
 

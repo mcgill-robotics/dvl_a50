@@ -26,9 +26,13 @@ using namespace dvl_a50;
 class DvlA50Node : public rclcpp_lifecycle::LifecycleNode
 {
 public:
+    constexpr const static char* PROTOCOL_FORMAT = "json_v3.1";
     DvlA50Node(std::string name)
     : rclcpp_lifecycle::LifecycleNode(name)
     {
+        // Create callback groups
+        timer_callback_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        service_callback_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
         this->declare_parameter<std::string>("ip_address", "192.168.194.95");
         this->declare_parameter<std::string>("frame", "dvl_a50_link");
         this->declare_parameter<double>("rate", 30.0);
@@ -119,33 +123,40 @@ public:
         // Services
         enable_srv = this->create_service<std_srvs::srv::Trigger>(
             "enable", 
-            bind(&DvlA50Node::srv_send_param<bool>, this, "acoustic_enabled", true, std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_param<bool>, this, "acoustic_enabled", true, std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         disable_srv = this->create_service<std_srvs::srv::Trigger>(
             "disable", 
-            bind(&DvlA50Node::srv_send_param<bool>, this, "acoustic_enabled", false, std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_param<bool>, this, "acoustic_enabled", false, std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         get_config_srv = this->create_service<std_srvs::srv::Trigger>(
             "get_config", 
-            bind(&DvlA50Node::srv_send_command, this, "get_config", std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_command, this, "get_config", std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         calibrate_gyro_srv = this->create_service<std_srvs::srv::Trigger>(
             "calibrate_gyro", 
-            bind(&DvlA50Node::srv_send_command, this, "calibrate_gyro", std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_command, this, "calibrate_gyro", std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         reset_dead_reckoning_srv = this->create_service<std_srvs::srv::Trigger>(
             "reset_dead_reckoning", 
-            bind(&DvlA50Node::srv_send_command, this, "reset_dead_reckoning", std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_command, this, "reset_dead_reckoning", std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         trigger_ping_srv = this->create_service<std_srvs::srv::Trigger>(
             "trigger_ping", 
-            bind(&DvlA50Node::srv_send_command, this, "trigger_ping", std::placeholders::_1, std::placeholders::_2));
+            bind(&DvlA50Node::srv_send_command, this, "trigger_ping", std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, service_callback_group_);
 
         // Start reading data
         RCLCPP_INFO(get_logger(), "Starting to receive reports at <= %f Hz", rate);
         timer = this->create_wall_timer(
-            std::chrono::duration<double>(1. / rate), 
-            std::bind(&DvlA50Node::publish, this)
+            std::chrono::duration<double>(1. / rate),
+            std::bind(&DvlA50Node::publish, this),
+            timer_callback_group_
         );
 
         return CallbackReturn::SUCCESS;
@@ -192,8 +203,25 @@ public:
     void publish()
     {
         DvlA50::Message res = dvl.receive();
-
-        if (res.contains("response_to"))
+        if (!res.contains("format") || !res.contains("type"))
+        {
+            RCLCPP_ERROR_STREAM_THROTTLE(get_logger(), *this, 200, "Received JSON packet without format or type fields: " 
+                << std::setw(4) << res.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+            return;
+        }
+        std::string format = res["format"];
+        if (format != PROTOCOL_FORMAT)
+        {
+            RCLCPP_WARN_THROTTLE(get_logger(), *this, 1000, "This driver expect Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible", PROTOCOL_FORMAT, format.c_str());
+        }
+        std::string type = res["type"];
+        if (type == "error")
+        {
+            RCLCPP_ERROR(get_logger(), "Failed to parse JSON with error: \n%s \nraw: \n%s", 
+                res["error_message"].get<std::string>().c_str(), 
+                res["raw_message"].get<std::string>().c_str());
+        }
+        else if (type == "response")
         {
             // Command response
             std::string trigger = res["response_to"];
@@ -201,13 +229,21 @@ public:
             // Always print the result
             if (res["success"])
             {
-                RCLCPP_INFO(get_logger(), "%s success: %s", trigger.c_str(), res["result"].dump().c_str());
+                // most results are null except for get_config, so only print if it's not null to avoid spamming the console with confusing null logs
+                if (!res["result"].is_null())
+                {
+                    RCLCPP_INFO(get_logger(), "%s success: %s", trigger.c_str(), res["result"].dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
+                }
+                else {
+                    RCLCPP_INFO(get_logger(), "%s success", trigger.c_str());
+                }
             }
             else
             {
-                RCLCPP_ERROR(get_logger(), "%s failed: %s", trigger.c_str(), res["error_message"].dump().c_str());
+                RCLCPP_ERROR(get_logger(), "%s failed: %s", trigger.c_str(), res["error_message"].dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
             }
-
+            
+            pending_srv_mtx.lock();
             // Check if we have a pending service call for this command and release it
             auto pending_it = pending_service_calls.find(trigger);
             if (pending_it != pending_service_calls.end())
@@ -215,9 +251,25 @@ public:
                 pending_it->second.set_value(res);
                 pending_service_calls.erase(pending_it);
             }
+            pending_srv_mtx.unlock();
         }
-        else if(res.contains("altitude"))
+        else if(type == "velocity")
         {
+            if (!res["velocity_valid"])
+            {
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with invalid velocity data");
+            }
+            int dvl_status = res["status"];
+            if (dvl_status > 0)
+            {
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with error status " << dvl_status);
+                if (dvl_status == 1)
+                {
+                    RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 500, "DVL may be overheating");
+                }
+
+            }
+
             // Velocity report
             velocity_report.header.stamp = rclcpp::Time(uint64_t(res["time_of_validity"]) * 1000);
 
@@ -282,8 +334,13 @@ public:
             
             odometry_pub->publish(odometry);
         }
-        else if (res.contains("pitch"))
+        else if (type == "position_local")
         {
+            int dvl_status = res["status"];
+            if (dvl_status > 0)
+            {
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received dead reckoning report report with error status " << dvl_status);
+            }
             // Dead reckoning report
             dead_reckoning_report.header.stamp = rclcpp::Time(static_cast<uint64_t>(double(res["ts"])) * 1e9);
 
@@ -309,7 +366,8 @@ public:
         }
         else
         {
-            RCLCPP_WARN(get_logger(), "Received unexpected DVL response: %s", res.dump().c_str());
+            RCLCPP_WARN_STREAM(get_logger(), "Received unexpected DVL response: " 
+                << std::setw(4) << res.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
         }
     }
 
@@ -321,14 +379,16 @@ public:
     {
         std::promise<DvlA50::Message> promise;
         std::future<DvlA50::Message> future = promise.get_future();
+        pending_srv_mtx.lock();
         pending_service_calls.insert(std::make_pair(command, std::move(promise)));
+        pending_srv_mtx.unlock();
         dvl.send_command(command);
 
         DvlA50::Message json_data = future.get();
         res->success = json_data["success"];
         if (res->success)
         {
-            res->message = json_data["result"];
+            res->message = json_data["error_message"];
         }
         else
         {
@@ -345,7 +405,9 @@ public:
     {
         std::promise<DvlA50::Message> promise;
         std::future<DvlA50::Message> future = promise.get_future();
+        pending_srv_mtx.lock();
         pending_service_calls.insert(std::make_pair("set_config", std::move(promise)));
+        pending_srv_mtx.unlock();
         dvl.set(param, value);
 
         DvlA50::Message json_data = future.get();
@@ -366,6 +428,8 @@ private:
 
     // Promises of unfulfilled service calls; assumes that no service is called twice in parallel
     std::map<std::string, std::promise<DvlA50::Message>> pending_service_calls;
+    // Mutex to protect pending_service_calls map, which is accessed from both the timer callback and service callbacks. 
+    std::mutex pending_srv_mtx;
     
     rclcpp::TimerBase::SharedPtr timer;
     rclcpp_lifecycle::LifecyclePublisher<marine_acoustic_msgs::msg::Dvl>::SharedPtr velocity_pub;
@@ -378,6 +442,11 @@ private:
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr calibrate_gyro_srv;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_dead_reckoning_srv;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr trigger_ping_srv;
+
+    // timer callback groups to ensure publish and service handling is done on separate threads
+    rclcpp::CallbackGroup::SharedPtr timer_callback_group_;
+    rclcpp::CallbackGroup::SharedPtr service_callback_group_;
+
 };
 
 
@@ -389,7 +458,7 @@ int main(int argc, char * argv[])
     setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 
     rclcpp::init(argc, argv);
-    rclcpp::executors::SingleThreadedExecutor exe;
+    rclcpp::executors::MultiThreadedExecutor exe;
     std::shared_ptr<DvlA50Node> node = std::make_shared<DvlA50Node>("dvl_a50");
     exe.add_node(node->get_node_base_interface());
     exe.spin();
