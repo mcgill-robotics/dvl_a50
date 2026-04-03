@@ -334,8 +334,14 @@ public:
                     odometry.twist.covariance[i*6 + j] = velocity_report.velocity_covar[i*3 + j];
                 }
             }
-            
-            odometry_pub->publish(odometry);
+            // only publish odometry after we have received at least one dead reckoning report to ensure the pose covariance is valid.
+            if (received_dead_reckoning_report)
+            {
+                odometry_pub->publish(odometry);
+                // stale the dead reckoning report received after we publish it to avoid publishing multiple odometry messages with the same position report if we receive multiple velocity reports before the next position report.
+                received_dead_reckoning_report = false;
+            }
+            received_velocity_report = true;
         }
         else if (type == "position_local")
         {
@@ -365,8 +371,15 @@ public:
 
             // Update the pose of the odometry
             odometry.header.stamp = dead_reckoning_report.header.stamp;
-            odometry.pose = dead_reckoning_report.pose;            
-            odometry_pub->publish(odometry);
+            odometry.pose = dead_reckoning_report.pose; 
+            // only publish odometry after we have received at least one velocity report to ensure the twist covariance is valid.       
+            if (received_velocity_report)
+            {
+                odometry_pub->publish(odometry);
+                // stale the velocity report received after we publish it to avoid publishing multiple odometry messages with the same velocity report if we receive multiple position reports before the next velocity report.
+                received_velocity_report = false;
+            }
+            received_dead_reckoning_report = true;
         }
         else
         {
@@ -429,6 +442,8 @@ private:
     marine_acoustic_msgs::msg::Dvl velocity_report;
     geometry_msgs::msg::PoseWithCovarianceStamped dead_reckoning_report;
     nav_msgs::msg::Odometry odometry;
+    bool received_velocity_report = false;
+    bool received_dead_reckoning_report = false;
 
     // Promises of unfulfilled service calls; assumes that no service is called twice in parallel
     std::map<std::string, std::promise<DvlA50::Message>> pending_service_calls;
