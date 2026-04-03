@@ -212,7 +212,7 @@ public:
         std::string format = res["format"];
         if (format != PROTOCOL_FORMAT)
         {
-            RCLCPP_WARN_THROTTLE(get_logger(), *this, 1000, "This driver expect Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible", PROTOCOL_FORMAT, format.c_str());
+            RCLCPP_WARN_THROTTLE(get_logger(), *this, 1000, "This driver expect Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible and update the 'PROTOCOL_FORMAT' constant string if needed", PROTOCOL_FORMAT, format.c_str());
         }
         std::string type = res["type"];
         if (type == "error")
@@ -220,6 +220,7 @@ public:
             RCLCPP_ERROR(get_logger(), "Failed to parse JSON with error: \n%s \nraw: \n%s", 
                 res["error_message"].get<std::string>().c_str(), 
                 res["raw_message"].get<std::string>().c_str());
+            return;
         }
         else if (type == "response")
         {
@@ -258,6 +259,7 @@ public:
             if (!res["velocity_valid"])
             {
                 RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with invalid velocity data");
+                return;
             }
             int dvl_status = res["status"];
             if (dvl_status > 0)
@@ -267,6 +269,7 @@ public:
                 {
                     RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 500, "DVL may be overheating");
                 }
+                return;
 
             }
 
@@ -340,6 +343,7 @@ public:
             if (dvl_status > 0)
             {
                 RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received dead reckoning report report with error status " << dvl_status);
+                return;
             }
             // Dead reckoning report
             dead_reckoning_report.header.stamp = rclcpp::Time(static_cast<uint64_t>(double(res["ts"])) * 1e9);
