@@ -1,6 +1,4 @@
-import time
 import launch
-import launch.actions
 import launch.events
 from launch import LaunchDescription
 from launch.actions import EmitEvent, RegisterEventHandler, LogInfo, SetEnvironmentVariable
@@ -34,10 +32,21 @@ def generate_launch_description():
             transition_id=lifecycle_msgs.msg.Transition.TRANSITION_CONFIGURE,
         )
     )
-    activate_event = EmitEvent(
-        event=ChangeState(
-            lifecycle_node_matcher=launch.events.matches_action(node),
-            transition_id=lifecycle_msgs.msg.Transition.TRANSITION_ACTIVATE,
+    
+    # When the node is configured (and therefore inactive), activate it
+    on_configure_success = RegisterEventHandler(
+        OnStateTransition(
+            target_lifecycle_node=node, # target dvl_a50 node
+            goal_state="inactive", # only trigger when the node reaches the 'inactive' state
+            # start the transition to 'active'
+            entities=[
+                EmitEvent(
+                    event=ChangeState(
+                        lifecycle_node_matcher=launch.events.matches_action(node),
+                        transition_id=lifecycle_msgs.msg.Transition.TRANSITION_ACTIVATE,
+                    )
+                )
+            ],
         )
     )
 
@@ -47,13 +56,13 @@ def generate_launch_description():
             target_lifecycle_node=node,
             goal_state="active",
             entities=[
-                LogInfo(msg=f"'sonar_blueview' reached the 'ACTIVE' state"),
+                LogInfo(msg=f"'dvl_a50' reached the 'ACTIVE' state"),
             ],
         )
     )
 
     ld.add_action(configure_event)
-    ld.add_action(activate_event)
+    ld.add_action(on_configure_success)
     ld.add_action(node)
     ld.add_action(on_activated)
 

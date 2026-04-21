@@ -212,7 +212,7 @@ public:
         std::string format = res["format"];
         if (format != PROTOCOL_FORMAT)
         {
-            RCLCPP_WARN_THROTTLE(get_logger(), *this, 1000, "This driver expect Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible", PROTOCOL_FORMAT, format.c_str());
+            RCLCPP_WARN_THROTTLE(get_logger(), *this, 1000, "This driver expect Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible and update the 'PROTOCOL_FORMAT' constant string if needed", PROTOCOL_FORMAT, format.c_str());
         }
         std::string type = res["type"];
         if (type == "error")
@@ -220,6 +220,7 @@ public:
             RCLCPP_ERROR(get_logger(), "Failed to parse JSON with error: \n%s \nraw: \n%s", 
                 res["error_message"].get<std::string>().c_str(), 
                 res["raw_message"].get<std::string>().c_str());
+            return;
         }
         else if (type == "response")
         {
@@ -258,6 +259,7 @@ public:
             if (!res["velocity_valid"])
             {
                 RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with invalid velocity data");
+                return;
             }
             int dvl_status = res["status"];
             if (dvl_status > 0)
@@ -267,6 +269,7 @@ public:
                 {
                     RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 500, "DVL may be overheating");
                 }
+                return;
 
             }
 
@@ -331,8 +334,14 @@ public:
                     odometry.twist.covariance[i*6 + j] = velocity_report.velocity_covar[i*3 + j];
                 }
             }
-            
-            odometry_pub->publish(odometry);
+            // only publish odometry after we have received at least one dead reckoning report to ensure the pose covariance is valid.
+            if (received_dead_reckoning_report)
+            {
+                odometry_pub->publish(odometry);
+                // stale the dead reckoning report received after we publish it to avoid publishing multiple odometry messages with the same position report if we receive multiple velocity reports before the next position report.
+                received_dead_reckoning_report = false;
+            }
+            received_velocity_report = true;
         }
         else if (type == "position_local")
         {
@@ -340,6 +349,7 @@ public:
             if (dvl_status > 0)
             {
                 RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received dead reckoning report report with error status " << dvl_status);
+                return;
             }
             // Dead reckoning report
             dead_reckoning_report.header.stamp = rclcpp::Time(static_cast<uint64_t>(double(res["ts"])) * 1e9);
@@ -349,9 +359,10 @@ public:
             dead_reckoning_report.pose.pose.position.z = double(res["z"]);
 
             double std_dev = double(res["std"]);
-            dead_reckoning_report.pose.covariance[0] = std_dev;
-            dead_reckoning_report.pose.covariance[7] = std_dev;
-            dead_reckoning_report.pose.covariance[14] = std_dev;
+            double variance = std_dev*std_dev;
+            dead_reckoning_report.pose.covariance[0] = variance;
+            dead_reckoning_report.pose.covariance[7] = variance;
+            dead_reckoning_report.pose.covariance[14] = variance;
 
             tf2::Quaternion quat;
             quat.setRPY(double(res["roll"]), double(res["pitch"]), double(res["yaw"]));
@@ -361,8 +372,15 @@ public:
 
             // Update the pose of the odometry
             odometry.header.stamp = dead_reckoning_report.header.stamp;
-            odometry.pose = dead_reckoning_report.pose;            
-            odometry_pub->publish(odometry);
+            odometry.pose = dead_reckoning_report.pose; 
+            // only publish odometry after we have received at least one velocity report to ensure the twist covariance is valid.       
+            if (received_velocity_report)
+            {
+                odometry_pub->publish(odometry);
+                // stale the velocity report received after we publish it to avoid publishing multiple odometry messages with the same velocity report if we receive multiple position reports before the next velocity report.
+                received_velocity_report = false;
+            }
+            received_dead_reckoning_report = true;
         }
         else
         {
@@ -425,6 +443,8 @@ private:
     marine_acoustic_msgs::msg::Dvl velocity_report;
     geometry_msgs::msg::PoseWithCovarianceStamped dead_reckoning_report;
     nav_msgs::msg::Odometry odometry;
+    bool received_velocity_report = false;
+    bool received_dead_reckoning_report = false;
 
     // Promises of unfulfilled service calls; assumes that no service is called twice in parallel
     std::map<std::string, std::promise<DvlA50::Message>> pending_service_calls;
