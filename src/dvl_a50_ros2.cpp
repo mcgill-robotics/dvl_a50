@@ -359,9 +359,10 @@ public:
             dead_reckoning_report.pose.pose.position.z = double(res["z"]);
 
             double std_dev = double(res["std"]);
-            dead_reckoning_report.pose.covariance[0] = std_dev;
-            dead_reckoning_report.pose.covariance[7] = std_dev;
-            dead_reckoning_report.pose.covariance[14] = std_dev;
+            double variance = std_dev*std_dev;
+            dead_reckoning_report.pose.covariance[0] = variance;
+            dead_reckoning_report.pose.covariance[7] = variance;
+            dead_reckoning_report.pose.covariance[14] = variance;
 
             tf2::Quaternion quat;
             quat.setRPY(double(res["roll"]), double(res["pitch"]), double(res["yaw"]));
