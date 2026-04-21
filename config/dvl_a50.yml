@@ -6,5 +6,6 @@ sensors:
       rate: 30.0
       speed_of_sound: 1500
       led_enabled: true
+      enable_on_activate: true
       mounting_rotation_offset: 0
       range_mode: "auto"
