@@ -160,7 +160,7 @@ void DvlA50::configure(
     message["command"] = "set_config";
     message["parameters"]["speed_of_sound"] = speed_of_sound;
     message["parameters"]["acoustic_enabled"] = acoustic_enabled;
-    message["parameters"]["dark_mode_enabled"] = led_enabled;
+    message["parameters"]["dark_mode_enabled"] = !led_enabled;
     message["parameters"]["mounting_rotation_offset"] = mounting_rotation_offset;
     message["parameters"]["range_mode"] = range_mode;
 
