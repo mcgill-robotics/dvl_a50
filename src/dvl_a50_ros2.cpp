@@ -103,9 +103,9 @@ public:
         odometry.header.frame_id = frame;
         
         // Publishers
-        velocity_pub = this->create_publisher<marine_acoustic_msgs::msg::Dvl>("dvl/velocity", 10);
-        dead_reckoning_pub = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("dvl/dead_reckoning", 10);
-        odometry_pub = this->create_publisher<nav_msgs::msg::Odometry>("dvl/odometry", 10);
+        velocity_pub = this->create_publisher<marine_acoustic_msgs::msg::Dvl>("velocity", 10);
+        dead_reckoning_pub = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("dead_reckoning", 10);
+        odometry_pub = this->create_publisher<nav_msgs::msg::Odometry>("odometry", 10);
 
         return CallbackReturn::SUCCESS;
     }
@@ -212,7 +212,7 @@ public:
         std::string format = res["format"];
         if (format != PROTOCOL_FORMAT)
         {
-            RCLCPP_WARN_THROTTLE(get_logger(), *this, 1000, "This driver expect Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible and update the 'PROTOCOL_FORMAT' constant string if needed", PROTOCOL_FORMAT, format.c_str());
+            RCLCPP_WARN_THROTTLE(get_logger(), *this, 1000, "This driver expects Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible and update the 'PROTOCOL_FORMAT' constant string if needed", PROTOCOL_FORMAT, format.c_str());
         }
         std::string type = res["type"];
         if (type == "error")
