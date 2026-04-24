@@ -15,7 +15,8 @@
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#include <marine_acoustic_msgs/msg/dvl.hpp>
+#include <dvl_msgs/msg/dvl.hpp>
+#include <dvl_msgs/msg/dvl_beam.hpp>
 
 #include "dvl_a50/dvl_a50.hpp"
 
@@ -27,6 +28,7 @@ class DvlA50Node : public rclcpp_lifecycle::LifecycleNode
 {
 public:
     constexpr const static char* PROTOCOL_FORMAT = "json_v3.1";
+    constexpr const static int DVL_BEAM_COUNT = 4;
     DvlA50Node(std::string name)
     : rclcpp_lifecycle::LifecycleNode(name)
     {
@@ -42,31 +44,6 @@ public:
         this->declare_parameter<int>("mountig_rotation_offset", 0);
         this->declare_parameter<std::string>("range_mode", "auto");
 
-        // Some information won't change, so we can fill it in here. 
-        velocity_report.velocity_mode = marine_acoustic_msgs::msg::Dvl::DVL_MODE_BOTTOM;
-        velocity_report.dvl_type = marine_acoustic_msgs::msg::Dvl::DVL_TYPE_PISTON;
-
-        // Each beam points 22.5° away from the center, LED pointing forward. 
-        // Transducers are rotated 45° around Z.
-        // Beam 1 (+135° from X)
-        velocity_report.beam_unit_vec[0].x = -0.6532814824381883;
-        velocity_report.beam_unit_vec[0].y =  0.6532814824381883;
-        velocity_report.beam_unit_vec[0].z =  0.38268343236508984;
-
-        // Beam 2 (-135° from X)
-        velocity_report.beam_unit_vec[1].x = -0.6532814824381883;
-        velocity_report.beam_unit_vec[1].y = -0.6532814824381883;
-        velocity_report.beam_unit_vec[1].z =  0.38268343236508984;
-
-        // Beam 3 (-45° from X)
-        velocity_report.beam_unit_vec[2].x =  0.6532814824381883;
-        velocity_report.beam_unit_vec[2].y = -0.6532814824381883;
-        velocity_report.beam_unit_vec[2].z =  0.38268343236508984;
-
-        // Beam 4 (+45° from X)
-        velocity_report.beam_unit_vec[3].x =  0.6532814824381883;
-        velocity_report.beam_unit_vec[3].y =  0.6532814824381883;
-        velocity_report.beam_unit_vec[3].z =  0.38268343236508984;
     }
 
     ~DvlA50Node()
@@ -97,13 +74,12 @@ public:
         dvl.configure(speed_of_sound, false, led_enabled, mountig_rotation_offset, range_mode);
         
         // Set some values from parameters that won't change
-        velocity_report.sound_speed = speed_of_sound;
         velocity_report.header.frame_id = frame;
         dead_reckoning_report.header.frame_id = frame;
         odometry.header.frame_id = frame;
         
         // Publishers
-        velocity_pub = this->create_publisher<marine_acoustic_msgs::msg::Dvl>("velocity", 10);
+        velocity_pub = this->create_publisher<dvl_msgs::msg::DVL>("velocity", 10);
         dead_reckoning_pub = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("dead_reckoning", 10);
         odometry_pub = this->create_publisher<nav_msgs::msg::Odometry>("odometry", 10);
 
@@ -282,46 +258,57 @@ public:
             // Velocity report
             velocity_report.header.stamp = rclcpp::Time(uint64_t(res["time_of_validity"]) * 1000);
 
+            velocity_report.time = double(res["time"]);
+
             velocity_report.velocity.x = double(res["vx"]);
             velocity_report.velocity.y = double(res["vy"]);
             velocity_report.velocity.z = double(res["vz"]);
+
+            velocity_report.fom = double(res["fom"]);
             
+            velocity_report.covariance.resize(9);
             for (size_t i = 0; i < 3; i++)
             {
                 for (size_t j = 0; j < 3; j++)
                 {
                     double val = double(res["covariance"][i][j]);
-                    velocity_report.velocity_covar[i*3 + j] = val;
+                    velocity_report.covariance[i*3 + j] = val;
                 }
             }
 
-            double current_altitude = double(res["altitude"]);
-            if(current_altitude >= 0.0 && res["velocity_valid"])
+            // already checked if altitude is valid above, so we can safely assign it here
+            velocity_report.altitude = altitude;
+
+            // remove existing beam list
+            velocity_report.beams.clear();
+            int num_valid_beams = 0;
+            for (const DvlA50::Message& transducer : res["transducers"])
             {
-                velocity_report.altitude = current_altitude;
-            }
-
-            velocity_report.course_gnd = std::atan2(velocity_report.velocity.y, velocity_report.velocity.x);
-            velocity_report.speed_gnd = std::sqrt(velocity_report.velocity.x * velocity_report.velocity.x + velocity_report.velocity.y * velocity_report.velocity.y);
-
-            velocity_report.beam_ranges_valid = true;
-            velocity_report.beam_velocities_valid = res["velocity_valid"];
-
-            velocity_report.num_good_beams = 0;
-            // Beam specific data
-            for (size_t beam = 0; beam < 4; beam++)
-            {
-                if (res["transducers"][beam]["beam_valid"])
+                dvl_msgs::msg::DVLBeam beam;
+                beam.id = transducer["id"];
+                beam.velocity = transducer["velocity"];
+                beam.distance = transducer["distance"];
+                beam.rssi = transducer["rssi"];
+                beam.nsd = transducer["nsd"];
+                beam.valid = transducer["beam_valid"];
+                if (beam.valid)
                 {
-                    velocity_report.num_good_beams++;
+                    num_valid_beams++;
                 }
-
-                velocity_report.range[beam] = double(res["transducers"][beam]["distance"]);
-                //velocity_report.range_covar
-                velocity_report.beam_quality[beam] = res["transducers"][beam]["rssi"];
-                velocity_report.beam_velocity[beam] = res["transducers"][beam]["velocity"];
-                //velocity_report.beam_velocity_covar
+                velocity_report.beams.push_back(beam);
             }
+
+            if (num_valid_beams < DVL_BEAM_COUNT)
+            {
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Only " << num_valid_beams << " of " << DVL_BEAM_COUNT << " beams are valid.");
+            }
+
+            velocity_report.velocity_valid = res["velocity_valid"];
+            velocity_report.status = dvl_status;
+
+            velocity_report.time_of_validity = res["time_of_validity"];
+            velocity_report.time_of_transmission = res["time_of_transmission"];
+            velocity_report.form = res["format"];
 
             velocity_pub->publish(velocity_report);
 
@@ -337,7 +324,7 @@ public:
             {
                 for (size_t j = 0; j < 3; j++)
                 {
-                    odometry.twist.covariance[i*6 + j] = velocity_report.velocity_covar[i*3 + j];
+                    odometry.twist.covariance[i*6 + j] = velocity_report.covariance[i*3 + j];
                 }
             }
             // only publish odometry after we have received at least one dead reckoning report to ensure the pose covariance is valid.
@@ -446,7 +433,7 @@ private:
     double rate;
     bool enable_on_activate;
 
-    marine_acoustic_msgs::msg::Dvl velocity_report;
+    dvl_msgs::msg::DVL velocity_report;
     geometry_msgs::msg::PoseWithCovarianceStamped dead_reckoning_report;
     nav_msgs::msg::Odometry odometry;
     bool received_velocity_report = false;
@@ -458,7 +445,7 @@ private:
     std::mutex pending_srv_mtx;
     
     rclcpp::TimerBase::SharedPtr timer;
-    rclcpp_lifecycle::LifecyclePublisher<marine_acoustic_msgs::msg::Dvl>::SharedPtr velocity_pub;
+    rclcpp_lifecycle::LifecyclePublisher<dvl_msgs::msg::DVL>::SharedPtr velocity_pub;
     rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr dead_reckoning_pub;
     rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Odometry>::SharedPtr odometry_pub;
 
