@@ -258,19 +258,25 @@ public:
         {
             if (!res["velocity_valid"])
             {
-                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with invalid velocity data");
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with invalid velocity data. Velocity report will not be published.");
                 return;
             }
             int dvl_status = res["status"];
             if (dvl_status > 0)
             {
-                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with error status " << dvl_status);
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with error status " << dvl_status << ". Velocity report will not be published.");
                 if (dvl_status == 1)
                 {
                     RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 500, "DVL may be overheating");
                 }
                 return;
 
+            }
+            double altitude = double(res["altitude"]);
+            if (altitude < 0.0)
+            {
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with negative altitude data: " << altitude << ". Velocity report will not be published.");
+                return;
             }
 
             // Velocity report
@@ -348,7 +354,7 @@ public:
             int dvl_status = res["status"];
             if (dvl_status > 0)
             {
-                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received dead reckoning report report with error status " << dvl_status);
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received dead reckoning report report with error status " << dvl_status << ". Dead reckoning report will not be published.");
                 return;
             }
             // Dead reckoning report
