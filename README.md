@@ -5,13 +5,13 @@ I based my version on [paagutie/dvl-a50](https://github.com/paagutie/dvl-a50), b
 
 - Driver itself is ROS independent and can be used as a shared library
 - Proper lifecycle node
-- Using [marine_acoustic_msgs](https://github.com/apl-ocean-engineering/marine_msgs/tree/ros2/marine_acoustic_msgs) and standard messages instead of custom message types
+- Using [dvl_msgs](https://github.com/paagutie/dvl_msgs) (specifically tailored for the DVL-A50) and standard messages instead of custom message types
 - Provides services for documented commands
 - Allows configuration of DVL on startup
 
 
 # Dependencies
-- [marine_acoustic_msgs](https://github.com/apl-ocean-engineering/marine_msgs/tree/ros2/marine_acoustic_msgs)
+- [dvl_msgs](https://github.com/paagutie/dvl_msgs)
 - [JSON for Modern C++](https://github.com/nlohmann/json) (submodule, see `include/dvl_a50/json/`)
 
 
@@ -42,7 +42,7 @@ $ ros2 service call dvl_a50/enable
 # Topics
 Data from the DVL is published on the following topics:
 
-- `dvl/velocity`: _marine_acoustic_msgs/Dvl_
+- `dvl/velocity`: _dvl_msgs/Dvl_
 - `dvl/dead_reckoning`: _geometry_msgs/PoseWithCovarianceStamped_
 - `dvl/odometry`: _nav_msgs/Odometry_
 
