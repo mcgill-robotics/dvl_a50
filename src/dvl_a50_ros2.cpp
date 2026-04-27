@@ -188,7 +188,7 @@ public:
         std::string format = res["format"];
         if (format != PROTOCOL_FORMAT)
         {
-            RCLCPP_WARN_THROTTLE(get_logger(), *this, 1000, "This driver expects Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible and update the 'PROTOCOL_FORMAT' constant string if needed", PROTOCOL_FORMAT, format.c_str());
+            RCLCPP_WARN_ONCE(get_logger(), "This driver expects Waterlinked protocol format %s but received JSON packet with protocol format %s. Processing will still proceed but is likely to crash. Please ensure driver is still compatible and update the 'PROTOCOL_FORMAT' constant string if needed", PROTOCOL_FORMAT, format.c_str());
         }
         std::string type = res["type"];
         if (type == "error")
@@ -200,186 +200,202 @@ public:
         }
         else if (type == "response")
         {
-            // Command response
-            std::string trigger = res["response_to"];
-
-            // Always print the result
-            if (res["success"])
-            {
-                // most results are null except for get_config, so only print if it's not null to avoid spamming the console with confusing null logs
-                if (!res["result"].is_null())
-                {
-                    RCLCPP_INFO(get_logger(), "%s success: %s", trigger.c_str(), res["result"].dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
-                }
-                else {
-                    RCLCPP_INFO(get_logger(), "%s success", trigger.c_str());
-                }
-            }
-            else
-            {
-                RCLCPP_ERROR(get_logger(), "%s failed: %s", trigger.c_str(), res["error_message"].dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
-            }
-            
-            pending_srv_mtx.lock();
-            // Check if we have a pending service call for this command and release it
-            auto pending_it = pending_service_calls.find(trigger);
-            if (pending_it != pending_service_calls.end())
-            {
-                pending_it->second.set_value(res);
-                pending_service_calls.erase(pending_it);
-            }
-            pending_srv_mtx.unlock();
+            handle_response(res);
         }
         else if(type == "velocity")
         {
-            if (!res["velocity_valid"])
-            {
-                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with invalid velocity data. Velocity report will not be published.");
-                return;
-            }
-            int dvl_status = res["status"];
-            if (dvl_status > 0)
-            {
-                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with error status " << dvl_status << ". Velocity report will not be published.");
-                if (dvl_status == 1)
-                {
-                    RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 500, "DVL may be overheating");
-                }
-                return;
-
-            }
-            double altitude = double(res["altitude"]);
-            if (altitude < 0.0)
-            {
-                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with negative altitude data: " << altitude << ". Velocity report will not be published.");
-                return;
-            }
-
-            // Velocity report
-            velocity_report.header.stamp = rclcpp::Time(uint64_t(res["time_of_validity"]) * 1000);
-
-            velocity_report.time = double(res["time"]);
-
-            velocity_report.velocity.x = double(res["vx"]);
-            velocity_report.velocity.y = double(res["vy"]);
-            velocity_report.velocity.z = double(res["vz"]);
-
-            velocity_report.fom = double(res["fom"]);
-            
-            velocity_report.covariance.resize(9);
-            for (size_t i = 0; i < 3; i++)
-            {
-                for (size_t j = 0; j < 3; j++)
-                {
-                    double val = double(res["covariance"][i][j]);
-                    velocity_report.covariance[i*3 + j] = val;
-                }
-            }
-
-            // already checked if altitude is valid above, so we can safely assign it here
-            velocity_report.altitude = altitude;
-
-            // remove existing beam list
-            velocity_report.beams.clear();
-            int num_valid_beams = 0;
-            for (const DvlA50::Message& transducer : res["transducers"])
-            {
-                dvl_msgs::msg::DVLBeam beam;
-                beam.id = transducer["id"];
-                beam.velocity = transducer["velocity"];
-                beam.distance = transducer["distance"];
-                beam.rssi = transducer["rssi"];
-                beam.nsd = transducer["nsd"];
-                beam.valid = transducer["beam_valid"];
-                if (beam.valid)
-                {
-                    num_valid_beams++;
-                }
-                velocity_report.beams.push_back(beam);
-            }
-
-            if (num_valid_beams < DVL_BEAM_COUNT)
-            {
-                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Only " << num_valid_beams << " of " << DVL_BEAM_COUNT << " beams are valid.");
-            }
-
-            velocity_report.velocity_valid = res["velocity_valid"];
-            velocity_report.status = dvl_status;
-
-            velocity_report.time_of_validity = res["time_of_validity"];
-            velocity_report.time_of_transmission = res["time_of_transmission"];
-            velocity_report.form = res["format"];
-
-            velocity_pub->publish(velocity_report);
-
-            // Update the twist of the odometry
-            odometry.header.stamp = velocity_report.header.stamp;
-            odometry.twist.twist.linear.x = velocity_report.velocity.x;
-            odometry.twist.twist.linear.y = velocity_report.velocity.y;
-            odometry.twist.twist.linear.z = velocity_report.velocity.z;
-
-            // Fill in the top left 3x3 of the 6x6 twist covariance matrix.
-            // Could do this further up, but I prefer the clean separation over saving two tiny for loops.
-            for (size_t i = 0; i < 3; i++)
-            {
-                for (size_t j = 0; j < 3; j++)
-                {
-                    odometry.twist.covariance[i*6 + j] = velocity_report.covariance[i*3 + j];
-                }
-            }
-            // only publish odometry after we have received at least one dead reckoning report to ensure the pose covariance is valid.
-            if (received_dead_reckoning_report)
-            {
-                odometry_pub->publish(odometry);
-                // stale the dead reckoning report received after we publish it to avoid publishing multiple odometry messages with the same position report if we receive multiple velocity reports before the next position report.
-                received_dead_reckoning_report = false;
-            }
-            received_velocity_report = true;
+            received_velocity_report = fill_velocity_report(res);
         }
         else if (type == "position_local")
         {
-            int dvl_status = res["status"];
-            if (dvl_status > 0)
-            {
-                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received dead reckoning report report with error status " << dvl_status << ". Dead reckoning report will not be published.");
-                return;
-            }
-            // Dead reckoning report
-            dead_reckoning_report.header.stamp = rclcpp::Time(static_cast<uint64_t>(double(res["ts"])) * 1e9);
-
-            dead_reckoning_report.pose.pose.position.x = double(res["x"]);
-            dead_reckoning_report.pose.pose.position.y = double(res["y"]);
-            dead_reckoning_report.pose.pose.position.z = double(res["z"]);
-
-            double std_dev = double(res["std"]);
-            double variance = std_dev*std_dev;
-            dead_reckoning_report.pose.covariance[0] = variance;
-            dead_reckoning_report.pose.covariance[7] = variance;
-            dead_reckoning_report.pose.covariance[14] = variance;
-
-            tf2::Quaternion quat;
-            quat.setRPY(double(res["roll"]), double(res["pitch"]), double(res["yaw"]));
-            dead_reckoning_report.pose.pose.orientation = tf2::toMsg(quat);
-
-            dead_reckoning_pub->publish(dead_reckoning_report);
-
-            // Update the pose of the odometry
-            odometry.header.stamp = dead_reckoning_report.header.stamp;
-            odometry.pose = dead_reckoning_report.pose; 
-            // only publish odometry after we have received at least one velocity report to ensure the twist covariance is valid.       
-            if (received_velocity_report)
-            {
-                odometry_pub->publish(odometry);
-                // stale the velocity report received after we publish it to avoid publishing multiple odometry messages with the same velocity report if we receive multiple position reports before the next velocity report.
-                received_velocity_report = false;
-            }
-            received_dead_reckoning_report = true;
+            received_dead_reckoning_report = fill_dead_reckoning_report(res);
         }
         else
         {
             RCLCPP_WARN_STREAM(get_logger(), "Received unexpected DVL response: " 
                 << std::setw(4) << res.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
         }
+    }
+
+        void handle_response(const DvlA50::Message& res)
+    {
+        // Command response
+        std::string trigger = res["response_to"];
+
+        // Always print the result
+        if (res["success"])
+        {
+            // most results are null except for get_config, so only print if it's not null to avoid spamming the console with confusing null logs
+            if (!res["result"].is_null())
+            {
+                RCLCPP_INFO(get_logger(), "%s success: %s", trigger.c_str(), res["result"].dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
+            }
+            else {
+                RCLCPP_INFO(get_logger(), "%s success", trigger.c_str());
+            }
+        }
+        else
+        {
+            RCLCPP_ERROR(get_logger(), "%s failed: %s", trigger.c_str(), res["error_message"].dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
+        }
+        
+        pending_srv_mtx.lock();
+        // Check if we have a pending service call for this command and release it
+        auto pending_it = pending_service_calls.find(trigger);
+        if (pending_it != pending_service_calls.end())
+        {
+            pending_it->second.set_value(res);
+            pending_service_calls.erase(pending_it);
+        }
+        pending_srv_mtx.unlock();
+
+    }
+
+    bool fill_velocity_report(const DvlA50::Message& res)
+    {
+        if (!res["velocity_valid"])
+        {
+            RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with invalid velocity data. Velocity report will not be published.");
+            return false;
+        }
+        int dvl_status = res["status"];
+        if (dvl_status > 0)
+        {
+            RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with error status " << dvl_status << ". Velocity report will not be published.");
+            if (dvl_status == 1)
+            {
+                RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 500, "DVL may be overheating");
+            }
+            return false;
+
+        }
+        double altitude = double(res["altitude"]);
+        if (altitude < 0.0)
+        {
+            RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received velocity report with negative altitude data: " << altitude << ". Velocity report will not be published.");
+            return false;
+        }
+
+        // Velocity report
+        velocity_report.header.stamp = rclcpp::Time(uint64_t(res["time_of_validity"]) * 1000);
+
+        velocity_report.time = double(res["time"]);
+
+        velocity_report.velocity.x = double(res["vx"]);
+        velocity_report.velocity.y = double(res["vy"]);
+        velocity_report.velocity.z = double(res["vz"]);
+
+        velocity_report.fom = double(res["fom"]);
+        
+        velocity_report.covariance.resize(9);
+        for (size_t i = 0; i < 3; i++)
+        {
+            for (size_t j = 0; j < 3; j++)
+            {
+                double val = double(res["covariance"][i][j]);
+                velocity_report.covariance[i*3 + j] = val;
+            }
+        }
+
+        // already checked if altitude is valid above, so we can safely assign it here
+        velocity_report.altitude = altitude;
+
+        // remove existing beam list
+        velocity_report.beams.clear();
+        int num_valid_beams = 0;
+        for (const DvlA50::Message& transducer : res["transducers"])
+        {
+            dvl_msgs::msg::DVLBeam beam;
+            beam.id = transducer["id"];
+            beam.velocity = transducer["velocity"];
+            beam.distance = transducer["distance"];
+            beam.rssi = transducer["rssi"];
+            beam.nsd = transducer["nsd"];
+            beam.valid = transducer["beam_valid"];
+            if (beam.valid)
+            {
+                num_valid_beams++;
+            }
+            velocity_report.beams.push_back(beam);
+        }
+
+        if (num_valid_beams < DVL_BEAM_COUNT)
+        {
+            RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Only " << num_valid_beams << " of " << DVL_BEAM_COUNT << " beams are valid.");
+        }
+
+        velocity_report.velocity_valid = res["velocity_valid"];
+        velocity_report.status = dvl_status;
+
+        velocity_report.time_of_validity = res["time_of_validity"];
+        velocity_report.time_of_transmission = res["time_of_transmission"];
+        velocity_report.form = res["format"];
+
+        velocity_pub->publish(velocity_report);
+
+        // Update the twist of the odometry
+        odometry.header.stamp = velocity_report.header.stamp;
+        odometry.twist.twist.linear.x = velocity_report.velocity.x;
+        odometry.twist.twist.linear.y = velocity_report.velocity.y;
+        odometry.twist.twist.linear.z = velocity_report.velocity.z;
+
+        // Fill in the top left 3x3 of the 6x6 twist covariance matrix.
+        // Could do this further up, but I prefer the clean separation over saving two tiny for loops.
+        for (size_t i = 0; i < 3; i++)
+        {
+            for (size_t j = 0; j < 3; j++)
+            {
+                odometry.twist.covariance[i*6 + j] = velocity_report.covariance[i*3 + j];
+            }
+        }
+        // only publish odometry after we have received at least one dead reckoning report to ensure the pose covariance is valid.
+        if (received_dead_reckoning_report)
+        {
+            odometry_pub->publish(odometry);
+            // stale the dead reckoning report received after we publish it to avoid publishing multiple odometry messages with the same position report if we receive multiple velocity reports before the next position report.
+            return false;
+        }
+        return true;
+    }
+
+    bool fill_dead_reckoning_report(const DvlA50::Message& res)
+    {
+        int dvl_status = res["status"];
+        if (dvl_status > 0)
+        {
+            RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *this, 1000, "Received dead reckoning report report with error status " << dvl_status << ". Dead reckoning report will not be published.");
+            return false;
+        }
+        // Dead reckoning report
+        dead_reckoning_report.header.stamp = rclcpp::Time(static_cast<uint64_t>(double(res["ts"])) * 1e9);
+
+        dead_reckoning_report.pose.pose.position.x = double(res["x"]);
+        dead_reckoning_report.pose.pose.position.y = double(res["y"]);
+        dead_reckoning_report.pose.pose.position.z = double(res["z"]);
+
+        double std_dev = double(res["std"]);
+        double variance = std_dev*std_dev;
+        dead_reckoning_report.pose.covariance[0] = variance;
+        dead_reckoning_report.pose.covariance[7] = variance;
+        dead_reckoning_report.pose.covariance[14] = variance;
+
+        tf2::Quaternion quat;
+        quat.setRPY(double(res["roll"]), double(res["pitch"]), double(res["yaw"]));
+        dead_reckoning_report.pose.pose.orientation = tf2::toMsg(quat);
+
+        dead_reckoning_pub->publish(dead_reckoning_report);
+
+        // Update the pose of the odometry
+        odometry.header.stamp = dead_reckoning_report.header.stamp;
+        odometry.pose = dead_reckoning_report.pose; 
+        // only publish odometry after we have received at least one velocity report to ensure the twist covariance is valid.       
+        if (received_velocity_report)
+        {
+            odometry_pub->publish(odometry);
+            // stale the velocity report received after we publish it to avoid publishing multiple odometry messages with the same velocity report if we receive multiple position reports before the next velocity report.
+            return false;
+        }
+        return true;
     }
 
 
