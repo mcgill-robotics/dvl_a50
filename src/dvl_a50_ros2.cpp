@@ -17,6 +17,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <dvl_msgs/msg/dvl.hpp>
 #include <dvl_msgs/msg/dvl_beam.hpp>
+#include <dvl_msgs/msg/dvldr.hpp>
 
 #include "dvl_a50/dvl_a50.hpp"
 
@@ -76,11 +77,12 @@ public:
         // Set some values from parameters that won't change
         velocity_report.header.frame_id = frame;
         dead_reckoning_report.header.frame_id = frame;
+        dead_reckoning_report.type = "position_local";
         odometry.header.frame_id = frame;
         
         // Publishers
         velocity_pub = this->create_publisher<dvl_msgs::msg::DVL>("velocity", 10);
-        dead_reckoning_pub = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("dead_reckoning", 10);
+        dead_reckoning_pub = this->create_publisher<dvl_msgs::msg::DVLDR>("dead_reckoning", 10);
         odometry_pub = this->create_publisher<nav_msgs::msg::Odometry>("odometry", 10);
 
         return CallbackReturn::SUCCESS;
@@ -369,26 +371,33 @@ public:
         // Dead reckoning report
         dead_reckoning_report.header.stamp = rclcpp::Time(static_cast<uint64_t>(double(res["ts"])) * 1e9);
 
-        dead_reckoning_report.pose.pose.position.x = double(res["x"]);
-        dead_reckoning_report.pose.pose.position.y = double(res["y"]);
-        dead_reckoning_report.pose.pose.position.z = double(res["z"]);
+        dead_reckoning_report.position.x = double(res["x"]);
+        dead_reckoning_report.position.y = double(res["y"]);
+        dead_reckoning_report.position.z = double(res["z"]);
 
-        double std_dev = double(res["std"]);
-        double variance = std_dev*std_dev;
-        dead_reckoning_report.pose.covariance[0] = variance;
-        dead_reckoning_report.pose.covariance[7] = variance;
-        dead_reckoning_report.pose.covariance[14] = variance;
+        dead_reckoning_report.pos_std = double(res["std"]);
 
-        tf2::Quaternion quat;
-        quat.setRPY(double(res["roll"]), double(res["pitch"]), double(res["yaw"]));
-        dead_reckoning_report.pose.pose.orientation = tf2::toMsg(quat);
+        dead_reckoning_report.roll = double(res["roll"]);
+        dead_reckoning_report.pitch = double(res["pitch"]);
+        dead_reckoning_report.yaw = double(res["yaw"]);
+
+        dead_reckoning_report.status = dvl_status;
+        dead_reckoning_report.format = res["format"];
 
         dead_reckoning_pub->publish(dead_reckoning_report);
 
         // Update the pose of the odometry
         odometry.header.stamp = dead_reckoning_report.header.stamp;
-        odometry.pose = dead_reckoning_report.pose; 
-        // only publish odometry after we have received at least one velocity report to ensure the twist covariance is valid.       
+        // position
+        odometry.pose.pose.position.x = dead_reckoning_report.position.x;
+        odometry.pose.pose.position.y = dead_reckoning_report.position.y;
+        odometry.pose.pose.position.z = dead_reckoning_report.position.z;
+        // orientation, convert to quaternion
+        tf2::Quaternion quat;
+        quat.setRPY(dead_reckoning_report.roll, dead_reckoning_report.pitch, dead_reckoning_report.yaw);
+        odometry.pose.pose.orientation = tf2::toMsg(quat);
+
+        // only publish odometry after we have received at least one velocity report to ensure the twist covariance is valid.
         if (received_velocity_report)
         {
             odometry_pub->publish(odometry);
@@ -450,7 +459,7 @@ private:
     bool enable_on_activate;
 
     dvl_msgs::msg::DVL velocity_report;
-    geometry_msgs::msg::PoseWithCovarianceStamped dead_reckoning_report;
+    dvl_msgs::msg::DVLDR dead_reckoning_report;
     nav_msgs::msg::Odometry odometry;
     bool received_velocity_report = false;
     bool received_dead_reckoning_report = false;
@@ -462,7 +471,7 @@ private:
     
     rclcpp::TimerBase::SharedPtr timer;
     rclcpp_lifecycle::LifecyclePublisher<dvl_msgs::msg::DVL>::SharedPtr velocity_pub;
-    rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr dead_reckoning_pub;
+    rclcpp_lifecycle::LifecyclePublisher<dvl_msgs::msg::DVLDR>::SharedPtr dead_reckoning_pub;
     rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Odometry>::SharedPtr odometry_pub;
 
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr enable_srv;
