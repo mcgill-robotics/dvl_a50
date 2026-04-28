@@ -42,7 +42,7 @@ public:
         this->declare_parameter<bool>("enable_on_activate", false);
         this->declare_parameter<int>("speed_of_sound", 1500);
         this->declare_parameter<bool>("led_enabled", true);
-        this->declare_parameter<int>("mountig_rotation_offset", 0);
+        this->declare_parameter<int>("mounting_rotation_offset", 0);
         this->declare_parameter<std::string>("range_mode", "auto");
 
     }
@@ -69,10 +69,10 @@ public:
         enable_on_activate = this->get_parameter("enable_on_activate").as_bool();
         int speed_of_sound = this->get_parameter("speed_of_sound").as_int();
         bool led_enabled = this->get_parameter("led_enabled").as_bool();
-        int mountig_rotation_offset = this->get_parameter("mountig_rotation_offset").as_int();
+        int mounting_rotation_offset = this->get_parameter("mounting_rotation_offset").as_int();
         std::string range_mode = this->get_parameter("range_mode").as_string();
         
-        dvl.configure(speed_of_sound, false, led_enabled, mountig_rotation_offset, range_mode);
+        dvl.configure(speed_of_sound, false, led_enabled, mounting_rotation_offset, range_mode);
         
         // Set some values from parameters that won't change
         velocity_report.header.frame_id = frame;
