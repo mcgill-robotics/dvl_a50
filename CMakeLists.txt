@@ -21,7 +21,6 @@ set(DEPS
   std_srvs
   geometry_msgs
   nav_msgs
-  marine_acoustic_msgs
   tf2_geometry_msgs
   dvl_msgs
 )
