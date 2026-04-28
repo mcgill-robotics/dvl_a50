@@ -15,17 +15,23 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+set(DEPS
+  rclcpp
+  rclcpp_lifecycle
+  std_srvs
+  geometry_msgs
+  nav_msgs
+  tf2_geometry_msgs
+  dvl_msgs
+)
+
 
 # find dependencies
+foreach(dep IN LISTS DEPS)
+  find_package(${dep} REQUIRED)
+endforeach()
 find_package(ament_cmake REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(std_srvs REQUIRED)
-find_package(geometry_msgs REQUIRED)
-find_package(nav_msgs REQUIRED)
-find_package(marine_acoustic_msgs REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
 find_package(rclcpp_components REQUIRED)
-find_package(rclcpp_lifecycle REQUIRED)
 find_package(lifecycle_msgs REQUIRED)
 
 
@@ -56,15 +62,7 @@ INSTALL(
 ADD_EXECUTABLE(${PROJECT_NAME}_node 
     src/dvl_a50_ros2.cpp
 )
-ament_target_dependencies(${PROJECT_NAME}_node 
-  rclcpp
-  rclcpp_lifecycle
-  std_srvs
-  geometry_msgs
-  nav_msgs
-  marine_acoustic_msgs
-  tf2_geometry_msgs
-)
+ament_target_dependencies(${PROJECT_NAME}_node ${DEPS})
 # Link node to library compiled above and install it in the correct location
 TARGET_LINK_LIBRARIES(${PROJECT_NAME}_node ${PROJECT_NAME})
 INSTALL(TARGETS

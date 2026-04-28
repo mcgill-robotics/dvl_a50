@@ -1,4 +1,4 @@
-sensors:
+dvl:
   dvl_a50:
     ros__parameters:
       ip_address: "192.168.194.95"

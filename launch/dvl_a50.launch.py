@@ -17,7 +17,7 @@ def generate_launch_description():
         get_package_share_directory("dvl_a50"), "config", "dvl_a50.yml"
     )
     node = LifecycleNode(
-        namespace="sensors",
+        namespace="dvl",
         package="dvl_a50",
         executable="dvl_a50_node",
         name="dvl_a50",
