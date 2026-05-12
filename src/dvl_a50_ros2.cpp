@@ -76,8 +76,9 @@ public:
         
         // Set some values from parameters that won't change
         velocity_report.header.frame_id = frame;
+        velocity_report.form = PROTOCOL_FORMAT;
         dead_reckoning_report.header.frame_id = frame;
-        dead_reckoning_report.type = "position_local";
+        dead_reckoning_report.format = PROTOCOL_FORMAT;
         odometry.header.frame_id = frame;
         
         // Publishers
