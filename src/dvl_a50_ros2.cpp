@@ -76,8 +76,9 @@ public:
         
         // Set some values from parameters that won't change
         velocity_report.header.frame_id = frame;
+        velocity_report.form = PROTOCOL_FORMAT;
         dead_reckoning_report.header.frame_id = frame;
-        dead_reckoning_report.type = "position_local";
+        dead_reckoning_report.format = PROTOCOL_FORMAT;
         odometry.header.frame_id = frame;
         
         // Publishers
@@ -289,7 +290,6 @@ public:
 
         velocity_report.fom = double(res["fom"]);
         
-        velocity_report.covariance.resize(9);
         for (size_t i = 0; i < 3; i++)
         {
             for (size_t j = 0; j < 3; j++)
@@ -303,7 +303,6 @@ public:
         velocity_report.altitude = altitude;
 
         // remove existing beam list
-        velocity_report.beams.clear();
         int num_valid_beams = 0;
         for (const DvlA50::Message& transducer : res["transducers"])
         {
@@ -318,7 +317,7 @@ public:
             {
                 num_valid_beams++;
             }
-            velocity_report.beams.push_back(beam);
+            velocity_report.beams[beam.id] = beam;
         }
 
         if (num_valid_beams < DVL_BEAM_COUNT)
